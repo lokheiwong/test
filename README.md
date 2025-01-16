@@ -1,4 +1,128 @@
-# test
+# README.md
 
-explaining your assumptions, discovered data issues, design and
-solution implementation details.
+## SumpUp Take Home Test
+### Assumptions
+
+### Content
+* Data Cleaning
+
+
+
+## Data Cleaning
+* Data Frame `channels`
+* Remove blank space in `CAMPAIGN_NAME`, `CAMPAIGN_PERIOD_BUDGET_CATEGORY`, `CHANNEL_3`, `CHANNEL_4`, `CHANNEL_5`
+* Replace `unknown` in col `CAMPAIGN_PERIOD_BUDGET_CATEGORY`, if `CAMPAIGN_ID` has duplicates, and all other columns have the same value
+* Row Count: 120 (raw) vs 61 (after cleaning)
+* Distinct `CAMPAIGN_ID`: 61
+* ? Naming convention for campaign setup
+
+```
+WITH RankedRows AS (
+SELECT 
+  CAMPAIGN_ID
+, REPLACE(CAMPAIGN_NAME, ' ', '') AS CAMPAIGN_NAME
+, REPLACE(CAMPAIGN_PERIOD_BUDGET_CATEGORY, ' ', '') AS CAMPAIGN_PERIOD_BUDGET_CATEGORY
+, REPLACE(CHANNEL_3, ' ', '') AS CHANNEL_3
+, REPLACE(CHANNEL_4, ' ', '') AS CHANNEL_4
+, REPLACE(CHANNEL_5, ' ', '') AS CHANNEL_5
+, ROW_NUMBER() OVER (
+  PARTITION BY CAMPAIGN_ID, REPLACE(CAMPAIGN_NAME, ' ', ''), REPLACE(CHANNEL_3, ' ', ''),
+  REPLACE(CHANNEL_4, ' ', ''), REPLACE(CHANNEL_5, ' ', '')
+  ORDER BY CASE WHEN REPLACE(CAMPAIGN_PERIOD_BUDGET_CATEGORY, ' ', '') = 'unknown' THEN 1 ELSE 0 END
+  ) AS rn
+FROM sumup.channels
+)
+
+SELECT
+  CAMPAIGN_ID
+, CAMPAIGN_NAME
+, case 
+  when CAMPAIGN_ID = '20991759296' then 'abs' 
+  when CAMPAIGN_PERIOD_BUDGET_CATEGORY = '' then 'unknown' 
+  else CAMPAIGN_PERIOD_BUDGET_CATEGORY end CAMPAIGN_PERIOD_BUDGET_CATEGORY
+, CHANNEL_3
+, CHANNEL_4
+, CHANNEL_5
+FROM RankedRows
+WHERE rn = 1 and CAMPAIGN_NAME != ''
+
+```
+
+* Data Frame `web_order`
+  * Resolve blanks and formatting issues in column `campaign_id`
+  * Remove rows with empty `CAMPAIGN_ID` and `CAMPAIGN_NAME`
+  * Replace rows with empty `COUNTRY_CODE` with `unknown`
+  * Row Count: 3825 (raw) vs 3777 (after cleaning)
+```
+WITH raw as (
+SELECT 
+  DATE
+, CASE WHEN COUNTRY_CODE IS NULL THEN 'Unknown' ELSE COUNTRY_CODE END AS COUNTRY_CODE
+, REGEXP_REPLACE(wo.CAMPAIGN_ID, '(\.0+)$', '') AS CAMPAIGN_ID
+, TOTAL_SPEND_EUR
+, NB_OF_SESSIONS
+, NB_OF_SIGNUPS
+, NB_OF_ORDERS
+, NB_OF_POSLITE_ITEMS_ORDERED
+, CASE 
+  WHEN NB_POSLITE_ITEMS_DISPATCHED > NB_OF_POSLITE_ITEMS_ORDERED OR NB_POSLITE_ITEMS_DISPATCHED > NB_OF_ORDERS THEN 0 ELSE NB_POSLITE_ITEMS_DISPATCHED 
+  END AS NB_POSLITE_ITEMS_DISPATCHED
+FROM sumup.web_orders wo
+)
+SELECT
+  DATE
+, COUNTRY_CODE
+, CAMPAIGN_ID
+, sum(TOTAL_SPEND_EUR) TOTAL_SPEND_EUR
+, sum(NB_OF_SESSIONS) NB_OF_SESSIONS
+, sum(NB_OF_SIGNUPS) NB_OF_SIGNUPS
+, sum(NB_OF_ORDERS) NB_OF_ORDERS
+, sum(NB_OF_POSLITE_ITEMS_ORDERED) NB_OF_POSLITE_ITEMS_ORDERED
+, sum(NB_POSLITE_ITEMS_DISPATCHED) NB_POSLITE_ITEMS_DISPATCHED
+, sum(TOTAL_SPEND_EUR)/ sum(NB_OF_SESSIONS) cp_session
+, sum(TOTAL_SPEND_EUR)/ sum(NB_OF_SIGNUPS) cp_signup
+, sum(TOTAL_SPEND_EUR)/ sum(NB_OF_ORDERS) cp_order
+, sum(TOTAL_SPEND_EUR)/ sum(NB_OF_POSLITE_ITEMS_ORDERED) cp_poslite_ordered
+, sum(TOTAL_SPEND_EUR)/ sum(NB_POSLITE_ITEMS_DISPATCHED) cp_poslite_dispatched
+FROM raw
+where CAMPAIGN_ID != ''
+group by 1, 2, 3
+
+```
+
+* Data Frame `leads_funnels`
+  * Resolve blanks and formatting issues in column `campaign_id`
+  * Remove rows with empty `CAMPAIGN_ID` 
+  * Replace rows with empty `COUNTRY_CODE` with `unknown`
+  * Replace `TOTAL_LEADS`, `TOTAL_FAKE_LEADS`, `TOTAL_SQLS`, `TOTAL_MEETING_DONE`, `TOTAL_SIGNED_LEADS`, `TOTAL_POS_LITE_DEALS`  with `0`, when `TOTAL_LEADS` > `TOTAL_CLICKS`, as it looks like an invalid case
+  * Remove rows where `TOTAL_IMPRESSIONS` and `TOTAL_CLICKS` = `100000000`
+  * Row Count: 3381 (raw) vs 3359 (after cleaning)
+```
+SELECT 
+  DATE
+, case when COUNTRY_CODE = '' then 'unknown' else COUNTRY_CODE end COUNTRY_CODE
+, REGEXP_REPLACE(CAMPAIGN_ID, '(\.0+)$', '') AS CAMPAIGN_ID
+, replace(CAMPAIGN_NAME, ' ', '') CAMPAIGN_NAME
+, replace(PRODUCT, ' ', '') PRODUCT
+, replace(CHANNEL_3, ' ', '') CHANNEL_3
+, replace(CHANNEL_4, ' ', '') CHANNEL_4
+, replace(CHANNEL_5, ' ', '') CHANNEL_5
+, TOTAL_IMPRESSIONS
+, TOTAL_CLICKS
+, TOTAL_SPEND
+, CASE WHEN TOTAL_LEADS > TOTAL_CLICKS THEN 0 ELSE TOTAL_LEADS END AS TOTAL_LEADS
+, CASE WHEN TOTAL_LEADS > TOTAL_CLICKS THEN 0 ELSE TOTAL_FAKE_LEADS END AS TOTAL_FAKE_LEADS
+, CASE WHEN TOTAL_LEADS > TOTAL_CLICKS or TOTAL_LEADS = 0 THEN 0  ELSE TOTAL_SQLS END AS TOTAL_SQLS
+, CASE WHEN TOTAL_LEADS > TOTAL_CLICKS or TOTAL_LEADS = 0 THEN 0  ELSE TOTAL_MEETING_DONE END AS TOTAL_MEETING_DONE
+, CASE WHEN TOTAL_LEADS > TOTAL_CLICKS or TOTAL_LEADS = 0 THEN 0  ELSE TOTAL_SIGNED_LEADS END AS TOTAL_SIGNED_LEADS
+, CASE WHEN TOTAL_LEADS > TOTAL_CLICKS or TOTAL_LEADS = 0 THEN 0  ELSE TOTAL_POS_LITE_DEALS END AS TOTAL_POS_LITE_DEALS
+FROM sumup.leads_funnels 
+where 
+TOTAL_IMPRESSIONS != 100000000
+and TOTAL_CLICKS != 100000000
+and CAMPAIGN_ID != '' 
+and CAMPAIGN_NAME != '' 
+```
+
+
+## Design and Solution Implementation Details
